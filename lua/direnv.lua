@@ -442,6 +442,47 @@ M.statusline = function()
    end
 end
 
+--- Wait for direnv to load (if .envrc exists) or return immediately
+--- @param timeout_ms? integer Timeout in milliseconds. nil, 0 or negative = no timeout
+--- @return boolean success True if direnv loaded successfully or no .envrc found
+M.wait_direnv = function(timeout_ms)
+   -- First check if .envrc exists in current or parent directories
+   local envrc_path = vim.fn.findfile(".envrc", ".;")
+   if envrc_path == "" then
+      -- No .envrc found, return immediately
+      return true
+   end
+
+   -- .envrc exists, wait for it to load
+   local loop = vim.uv or vim.loop
+   local start_time = loop.hrtime() / 1000000 -- ns -> ms
+   local no_timeout = not timeout_ms or timeout_ms <= 0
+
+   while no_timeout or (loop.hrtime() / 1000000 < start_time + timeout_ms) do
+      -- Check cache first for performance
+      if cache.status == 0 then -- 0 means allowed/active
+         return true
+      end
+
+      -- Force refresh if cache is stale or empty
+      if
+         cache.status == nil
+         or (loop.hrtime() / 1000000 - cache.last_check) > 100
+      then
+         M._get_rc_status(function(status, _)
+            if status == 0 then
+               return true
+            end
+         end)
+      end
+
+      -- Small delay to avoid busy waiting
+      vim.loop.sleep(50)
+   end
+
+   return false -- Timeout (only if timeout was enabled)
+end
+
 --- Setup the plugin with user configuration
 --- @param user_config? table User configuration table
 M.setup = function(user_config)
